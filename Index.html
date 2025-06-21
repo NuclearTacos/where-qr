@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QR Code Scanner with Redirect Tracker</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/lucide/0.263.1/lucide.min.css">
+</head>
+<body>
+    <div id="root"></div>
+    
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        
+        // Lucide React icons as functional components
+        const Icon = ({ name, className = "w-5 h-5" }) => {
+            return <i className={`lucide lucide-${name} ${className}`}></i>;
+        };
+
+        const QRScanner = () => {
+            const [scanning, setScanning] = useState(false);
+            const [result, setResult] = useState(null);
+            const [error, setError] = useState(null);
+            const [loading, setLoading] = useState(false);
+            const [redirectChain, setRedirectChain] = useState([]);
+            const [supported, setSupported] = useState(true);
+            const [permissionStatus, setPermissionStatus] = useState('prompt');
+            const videoRef = useRef(null);
+            const streamRef = useRef(null);
+            const detectorRef = useRef(null);
+            const scanningRef = useRef(false);
+
+            useEffect(() => {
+                // Check if BarcodeDetector is supported
+                if (!('BarcodeDetector' in window)) {
+                    setSupported(false);
+                    setError('QR code scanning is not supported on this browser. Try using Chrome on your Pixel 7 Pro.');
+                } else {
+                    // Check if QR code format is supported
+                    window.BarcodeDetector.getSupportedFormats().then(formats => {
+                        if (!formats.includes('qr_code')) {
+                            setSupported(false);
+                            setError('QR code format is not supported on this device.');
+                        }
+                    });
+                }
+
+                // Check camera permission status
+                checkPermissions();
+            }, []);
+
+            const checkPermissions = async () => {
+                try {
+                    if ('permissions' in navigator) {
+                        const result = await navigator.permissions.query({ name: 'camera' });
+                        setPermissionStatus(result.state);
+                        
+                        result.addEventListener('change', () => {
+                            setPermissionStatus(result.state);
+                        });
+                    }
+                } catch (err) {
+                    console.log('Permission API not available');
+                }
+            };
+
+            const startScanning = async () => {
+                try {
+                    setError(null);
+                    setLoading(true);
+                    
+                    // Request camera permission with better error handling
+                    let stream;
+                    try {
+                        stream = await navigator.mediaDevices.getUserMedia({
+                            video: { 
+                                facingMode: 'environment',
+                                width: { ideal: 1280 },
+                                height: { ideal: 720 }
+                            }
+                        });
+                    } catch (permError) {
+                        // Handle specific permission errors
+                        if (permError.name === 'NotAllowedError') {
+                            setError('Camera permission denied. Please allow camera access for this site in your browser settings.');
+                            setPermissionStatus('denied');
+                        } else if (permError.name === 'NotFoundError') {
+                            setError('No camera found on this device.');
+                        } else if (permError.name === 'NotReadableError') {
+                            setError('Camera is already in use by another app.');
+                        } else if (permError.name === 'OverconstrainedError') {
+                            // Try again with basic constraints
+                            try {
+                                stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                            } catch (fallbackError) {
+                                throw fallbackError;
+                            }
+                        } else {
+                            throw permError;
+                        }
+                        
+                        if (!stream) {
+                            setLoading(false);
+                            return;
+                        }
+                    }
+                    
+                    streamRef.current = stream;
+                    
+                    if (videoRef.current) {
+                        videoRef.current.srcObject = stream;
+                        await videoRef.current.play();
+                    }
+                    
+                    // Create barcode detector
+                    detectorRef.current = new window.BarcodeDetector({ formats: ['qr_code'] });
+                    
+                    setScanning(true);
+                    scanningRef.current = true;
+                    setLoading(false);
+                    setPermissionStatus('granted');
+                    
+                    // Start continuous scanning
+                    scanQRCode();
+                } catch (err) {
+                    console.error('Camera error:', err);
+                    setError(`Camera error: ${err.message}`);
+                    setLoading(false);
+                }
+            };
+
+            const scanQRCode = async () => {
+                if (!scanningRef.current || !videoRef.current || !detectorRef.current) return;
+                
+                try {
+                    const barcodes = await detectorRef.current.detect(videoRef.current);
+                    
+                    if (barcodes.length > 0) {
+                        const qrData = barcodes[0].rawValue;
+                        setResult(qrData);
+                        stopScanning();
+                        
+                        // Check if it's a URL
+                        try {
+                            new URL(qrData);
+                            checkRedirects(qrData);
+                        } catch {
+                            // Not a URL, just display the result
+                            setRedirectChain([]);
+                        }
+                    } else {
+                        // Continue scanning
+                        if (scanningRef.current) {
+                            requestAnimationFrame(scanQRCode);
+                        }
+                    }
+                } catch (err) {
+                    if (scanningRef.current) {
+                        requestAnimationFrame(scanQRCode);
+                    }
+                }
+            };
+
+            const stopScanning = () => {
+                scanningRef.current = false;
+                setScanning(false);
+                
+                if (streamRef.current) {
+                    streamRef.current.getTracks().forEach(track => track.stop());
+                    streamRef.current = null;
+                }
+                
+                if (videoRef.current) {
+                    videoRef.current.srcObject = null;
+                }
+            };
+
+            const checkRedirects = async (url) => {
+                setLoading(true);
+                setRedirectChain([]);
+                
+                try {
+                    // Note: Due to CORS restrictions, we can't directly follow redirects
+                    setRedirectChain([
+                        { url, status: 'Direct access not possible due to CORS', note: 'To track redirects, you would need:' },
+                        { url: '1. A backend service to follow the redirect chain', status: '', note: '' },
+                        { url: '2. Or use this code on your own server', status: '', note: '' },
+                        { url: '3. Or use a CORS proxy service', status: '', note: '' }
+                    ]);
+                } catch (err) {
+                    setError(`Error checking redirects: ${err.message}`);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const reset = () => {
+                setResult(null);
+                setRedirectChain([]);
+                setError(null);
+            };
+
+            const openSettings = () => {
+                setError(
+                    <div>
+                        <p className="mb-2">To enable camera access on your Pixel 7 Pro:</p>
+                        <ol className="list-decimal list-inside space-y-1 text-sm">
+                            <li>Tap the lock icon in your browser's address bar</li>
+                            <li>Find "Camera" in the permissions list</li>
+                            <li>Change it from "Block" to "Allow"</li>
+                            <li>Refresh this page and try again</li>
+                        </ol>
+                        <p className="mt-2 text-sm">Or go to Chrome Settings → Site Settings → Camera</p>
+                    </div>
+                );
+            };
+
+            if (!supported) {
+                return (
+                    <div className="min-h-screen bg-gray-900 text-white p-4 flex items-center justify-center">
+                        <div className="max-w-md w-full">
+                            <div className="bg-red-900/20 border border-red-500 rounded-lg p-4">
+                                <div className="flex items-center space-x-2 text-red-400">
+                                    <Icon name="alert-circle" />
+                                    <span className="font-medium">Compatibility Issue</span>
+                                </div>
+                                <p className="mt-2 text-sm text-gray-300">{error}</p>
+                                <p className="mt-3 text-xs text-gray-400">
+                                    For Pixel 7 Pro, use:
+                                    <br />• Chrome (recommended)
+                                    <br />• Edge
+                                    <br />• Opera
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="min-h-screen bg-gray-900 text-white">
+                    <div className="max-w-md mx-auto p-4">
+                        <h1 className="text-2xl font-bold mb-6 text-center">QR Code Scanner</h1>
+                        
+                        {!scanning && !result && (
+                            <div className="text-center">
+                                {permissionStatus === 'denied' && (
+                                    <div className="mb-4 bg-orange-900/20 border border-orange-500 rounded-lg p-4">
+                                        <div className="flex items-center space-x-2 text-orange-400 mb-2">
+                                            <Icon name="shield" />
+                                            <span className="font-medium">Camera Permission Blocked</span>
+                                        </div>
+                                        <p className="text-sm text-gray-300 mb-3">
+                                            This app needs camera access to scan QR codes.
+                                        </p>
+                                        <button
+                                            onClick={openSettings}
+                                            className="bg-orange-600 hover:bg-orange-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                                        >
+                                            How to Enable Camera
+                                        </button>
+                                    </div>
+                                )}
+                                
+                                <button
+                                    onClick={startScanning}
+                                    disabled={loading}
+                                    className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 px-6 py-3 rounded-lg font-medium flex items-center space-x-2 mx-auto transition-colors"
+                                >
+                                    {loading ? (
+                                        <>
+                                            <Icon name="loader-2" className="w-5 h-5 animate-spin" />
+                                            <span>Starting camera...</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Icon name="camera" />
+                                            <span>Start Scanning</span>
+                                        </>
+                                    )}
+                                </button>
+                                
+                                {error && (
+                                    <div className="mt-4 bg-red-900/20 border border-red-500 rounded-lg p-3 text-left">
+                                        <div className="text-sm text-red-400">
+                                            {typeof error === 'string' ? error : error}
+                                        </div>
+                                    </div>
+                                )}
+                                
+                                <div className="mt-6 text-xs text-gray-500">
+                                    <p>Permission Status: {permissionStatus}</p>
+                                </div>
+                            </div>
+                        )}
+                        
+                        {scanning && (
+                            <div className="relative">
+                                <video
+                                    ref={videoRef}
+                                    className="w-full rounded-lg bg-black"
+                                    playsInline
+                                    autoPlay
+                                    muted
+                                />
+                                <div className="absolute inset-0 border-2 border-blue-500 rounded-lg pointer-events-none">
+                                    <div className="absolute inset-0 flex items-center justify-center">
+                                        <div className="w-48 h-48 border-2 border-white rounded-lg opacity-50"></div>
+                                    </div>
+                                </div>
+                                <button
+                                    onClick={stopScanning}
+                                    className="absolute top-4 right-4 bg-red-600 hover:bg-red-700 p-2 rounded-full transition-colors"
+                                >
+                                    <Icon name="x" />
+                                </button>
+                                <p className="text-center mt-4 text-sm text-gray-400">
+                                    Position QR code within the frame
+                                </p>
+                            </div>
+                        )}
+                        
+                        {result && (
+                            <div className="space-y-4">
+                                <div className="bg-gray-800 rounded-lg p-4">
+                                    <h2 className="font-medium mb-2">Scanned Result:</h2>
+                                    <p className="text-sm text-gray-300 break-all">{result}</p>
+                                    
+                                    {result.match(/^https?:\/\//) && (
+                                        <a
+                                            href={result}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="mt-3 inline-flex items-center space-x-1 text-blue-400 hover:text-blue-300 text-sm"
+                                        >
+                                            <Icon name="external-link" className="w-4 h-4" />
+                                            <span>Open URL</span>
+                                        </a>
+                                    )}
+                                </div>
+                                
+                                {redirectChain.length > 0 && (
+                                    <div className="bg-gray-800 rounded-lg p-4">
+                                        <h2 className="font-medium mb-3">Redirect Information:</h2>
+                                        <div className="space-y-2">
+                                            {redirectChain.map((item, index) => (
+                                                <div key={index} className="text-sm">
+                                                    <p className="text-gray-300 break-all">{item.url}</p>
+                                                    {item.status && (
+                                                        <p className="text-gray-500 text-xs mt-1">{item.status}</p>
+                                                    )}
+                                                    {item.note && (
+                                                        <p className="text-gray-500 text-xs">{item.note}</p>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                                
+                                {loading && (
+                                    <div className="flex items-center justify-center space-x-2 text-gray-400">
+                                        <Icon name="loader-2" className="w-4 h-4 animate-spin" />
+                                        <span className="text-sm">Checking redirects...</span>
+                                    </div>
+                                )}
+                                
+                                <button
+                                    onClick={reset}
+                                    className="w-full bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg font-medium transition-colors"
+                                >
+                                    Scan Another Code
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<QRScanner />);
+    </script>
+
+    <!-- Add Lucide icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script>
+        lucide.createIcons();
+        // Re-create icons when React re-renders
+        const observer = new MutationObserver(() => {
+            lucide.createIcons();
+        });
+        observer.observe(document.getElementById('root'), {
+            childList: true,
+            subtree: true
+        });
+    </script>
+</body>
+</html>
