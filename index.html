@@ -31,6 +31,7 @@
             const [permissionStatus, setPermissionStatus] = useState('prompt');
             const [debugMode, setDebugMode] = useState(false);
             const [debugInfo, setDebugInfo] = useState({});
+            const [videoStatus, setVideoStatus] = useState('initializing');
             const videoRef = useRef(null);
             const streamRef = useRef(null);
             const detectorRef = useRef(null);
@@ -121,10 +122,32 @@
                     }
                     
                     streamRef.current = stream;
+                    setVideoStatus('stream obtained');
                     
                     if (videoRef.current) {
                         videoRef.current.srcObject = stream;
+                        setVideoStatus('stream attached');
+                        
+                        // Wait for video metadata to load
+                        await new Promise((resolve, reject) => {
+                            const timeout = setTimeout(() => {
+                                reject(new Error('Video metadata loading timeout'));
+                            }, 5000);
+                            
+                            videoRef.current.onloadedmetadata = () => {
+                                clearTimeout(timeout);
+                                resolve();
+                            };
+                            
+                            // If metadata is already loaded
+                            if (videoRef.current.readyState >= 1) {
+                                clearTimeout(timeout);
+                                resolve();
+                            }
+                        });
+                        
                         await videoRef.current.play();
+                        setVideoStatus('playing');
                         
                         // Capture video stream info for debugging
                         const videoTrack = stream.getVideoTracks()[0];
@@ -133,7 +156,9 @@
                             ...prev,
                             videoSettings: settings,
                             trackLabel: videoTrack.label,
-                            trackState: videoTrack.readyState
+                            trackState: videoTrack.readyState,
+                            videoWidth: videoRef.current.videoWidth,
+                            videoHeight: videoRef.current.videoHeight
                         }));
                     }
                     
@@ -145,8 +170,10 @@
                     setLoading(false);
                     setPermissionStatus('granted');
                     
-                    // Start continuous scanning
-                    scanQRCode();
+                    // Start continuous scanning after a short delay
+                    setTimeout(() => {
+                        scanQRCode();
+                    }, 500);
                 } catch (err) {
                     console.error('Camera error:', err);
                     setError(`Camera error: ${err.message}`);
@@ -158,6 +185,13 @@
                 if (!scanningRef.current || !videoRef.current || !detectorRef.current) return;
                 
                 try {
+                    // Ensure video is ready
+                    if (videoRef.current.readyState < 2) {
+                        // Video not ready yet, try again
+                        setTimeout(scanQRCode, 100);
+                        return;
+                    }
+                    
                     const barcodes = await detectorRef.current.detect(videoRef.current);
                     
                     if (barcodes.length > 0) {
@@ -180,6 +214,7 @@
                         }
                     }
                 } catch (err) {
+                    console.error('Scan error:', err);
                     if (scanningRef.current) {
                         requestAnimationFrame(scanQRCode);
                     }
@@ -321,7 +356,7 @@
                                     <p>Browser: {navigator.userAgent.match(/(Chrome|Edge|Opera|Firefox|Safari)\/[\d.]+/)?.[0] || 'Unknown'}</p>
                                     <button 
                                         onClick={() => setDebugMode(!debugMode)}
-                                        className="text-blue-400 hover:text-blue-300 underline"
+                                        className="text-blue-400 hover:text-blue-300 underline mt-1"
                                     >
                                         {debugMode ? 'Hide' : 'Show'} Debug Info
                                     </button>
@@ -345,26 +380,24 @@
                         )}
                         
                         {scanning && (
-                            <div className="relative">
+                            <div className="relative bg-gray-800 rounded-lg overflow-hidden" style={{ minHeight: '300px' }}>
                                 <video
                                     ref={videoRef}
-                                    className="w-full rounded-lg bg-black"
-                                    style={{ maxHeight: '70vh', objectFit: 'cover' }}
-                                    playsInline
-                                    autoPlay
-                                    muted
+                                    className="w-full h-full rounded-lg bg-gray-800"
+                                    style={{ display: 'block', maxHeight: '70vh', objectFit: 'cover' }}
+                                    playsInline={true}
+                                    autoPlay={true}
+                                    muted={true}
+                                    controls={false}
                                 />
-                                <div className="absolute inset-0 border-2 border-blue-500 rounded-lg pointer-events-none overflow-hidden">
+                                <div className="absolute inset-0 border-2 border-blue-500 rounded-lg pointer-events-none">
                                     <div className="absolute inset-0 flex items-center justify-center">
-                                        <div className="w-48 h-48 border-2 border-white rounded-lg opacity-50">
+                                        <div className="w-48 h-48 relative">
                                             <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-white rounded-tl-lg"></div>
                                             <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-white rounded-tr-lg"></div>
                                             <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-white rounded-bl-lg"></div>
                                             <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-white rounded-br-lg"></div>
                                         </div>
-                                    </div>
-                                    <div className="absolute inset-0 bg-black bg-opacity-50">
-                                        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-48 h-48 bg-transparent"></div>
                                     </div>
                                 </div>
                                 <button
@@ -377,11 +410,18 @@
                                     Position QR code within the frame
                                 </p>
                                 
-                                {debugMode && debugInfo.videoSettings && (
+                                {scanning && (
                                     <div className="mt-2 bg-gray-800 rounded-lg p-2 text-xs">
-                                        <p>Video: {debugInfo.videoSettings.width}x{debugInfo.videoSettings.height}</p>
-                                        <p>Camera: {debugInfo.videoSettings.facingMode || 'unknown'}</p>
-                                        <p>Track: {debugInfo.trackLabel || 'unknown'}</p>
+                                        <p>Status: {videoStatus}</p>
+                                        {debugMode && debugInfo.videoSettings && (
+                                            <>
+                                                <p>Stream: {debugInfo.videoSettings.width}x{debugInfo.videoSettings.height}</p>
+                                                <p>Video: {debugInfo.videoWidth}x{debugInfo.videoHeight}</p>
+                                                <p>Camera: {debugInfo.videoSettings.facingMode || 'unknown'}</p>
+                                                <p>Track: {debugInfo.trackLabel || 'unknown'}</p>
+                                                <p>State: {debugInfo.trackState}</p>
+                                            </>
+                                        )}
                                     </div>
                                 )}
                             </div>
