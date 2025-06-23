@@ -124,8 +124,17 @@
                     streamRef.current = stream;
                     setVideoStatus('stream obtained');
                     
-                    // Simple approach - just set the stream and let browser handle it
-                    if (videoRef.current) {
+                    // Add a small delay to ensure DOM is ready
+                    setTimeout(() => {
+                        console.log('Checking video ref:', videoRef.current);
+                        
+                        if (!videoRef.current) {
+                            console.error('Video ref is null!');
+                            setError('Video element not mounted. Please refresh and try again.');
+                            setVideoStatus('error - no video element');
+                            return;
+                        }
+                        
                         console.log('Setting srcObject on video element');
                         videoRef.current.srcObject = stream;
                         setVideoStatus('stream set - waiting for video');
@@ -137,10 +146,13 @@
                         
                         // Simple debug info update
                         const updateDebug = () => {
-                            if (!videoRef.current || !streamRef.current) return;
+                            if (!videoRef.current || !streamRef.current) {
+                                console.log('Missing refs in updateDebug');
+                                return;
+                            }
                             
                             const track = streamRef.current.getVideoTracks()[0];
-                            setDebugInfo({
+                            const debugData = {
                                 hasVideo: !!videoRef.current,
                                 hasSrcObject: !!videoRef.current.srcObject,
                                 trackEnabled: track?.enabled,
@@ -153,7 +165,10 @@
                                 currentTime: videoRef.current.currentTime,
                                 duration: videoRef.current.duration,
                                 error: videoRef.current.error?.message || 'none'
-                            });
+                            };
+                            
+                            console.log('Debug data:', debugData);
+                            setDebugInfo(debugData);
                         };
                         
                         // Update immediately and then every 500ms
@@ -163,9 +178,9 @@
                         // Clean up timer later
                         setTimeout(() => clearInterval(debugTimer), 60000);
                         
-                        // Try different approaches to start video
+                        // Try to play after another small delay
                         setTimeout(() => {
-                            console.log('Attempting video play after timeout');
+                            console.log('Attempting video play');
                             if (videoRef.current && videoRef.current.paused) {
                                 videoRef.current.play().then(() => {
                                     console.log('Play successful');
@@ -175,11 +190,8 @@
                                     setVideoStatus('click to play - ' + err.message);
                                 });
                             }
-                        }, 100);
-                    } else {
-                        console.error('No video ref available!');
-                        setError('Video element not found');
-                    }
+                        }, 200);
+                    }, 100); // Small delay to ensure DOM is ready
                     
                     // Create barcode detector
                     detectorRef.current = new window.BarcodeDetector({ formats: ['qr_code'] });
@@ -250,13 +262,20 @@
                 setScanning(false);
                 
                 if (streamRef.current) {
-                    streamRef.current.getTracks().forEach(track => track.stop());
+                    streamRef.current.getTracks().forEach(track => {
+                        track.stop();
+                        console.log('Stopped track:', track.label);
+                    });
                     streamRef.current = null;
                 }
                 
                 if (videoRef.current) {
                     videoRef.current.srcObject = null;
                 }
+                
+                // Clear debug info
+                setDebugInfo({});
+                setVideoStatus('stopped');
             };
 
             const checkRedirects = async (url) => {
@@ -327,7 +346,7 @@
                 <div className="min-h-screen bg-gray-900 text-white">
                     <div className="max-w-md mx-auto p-4">
                         <h1 className="text-2xl font-bold mb-6 text-center">QR Code Scanner</h1>
-                        <p className="text-xs text-gray-500 text-center mb-4">Version: 2.3 - Simple video approach (Dec 2024)</p>
+                        <p className="text-xs text-gray-500 text-center mb-4">Version: 2.4 - Fix video ref (Dec 2024)</p>
                         
                         {!scanning && !result && (
                             <div className="text-center">
@@ -470,14 +489,14 @@
                                             <p>Has Video Element: {debugInfo.hasVideo ? 'Yes' : 'No'}</p>
                                             <p>Has SrcObject: {debugInfo.hasSrcObject ? 'Yes' : 'No'}</p>
                                             <p>Track Enabled: {debugInfo.trackEnabled ? 'Yes' : 'No'}</p>
-                                            <p>Track Ready: {debugInfo.trackReady}</p>
+                                            <p>Track Ready: {debugInfo.trackReady || 'unknown'}</p>
                                             <p className="font-bold mt-2">Video State:</p>
-                                            <p>Size: {debugInfo.videoWidth}x{debugInfo.videoHeight}</p>
-                                            <p>Ready State: {debugInfo.readyState}</p>
-                                            <p>Paused: {debugInfo.paused ? 'Yes' : 'No'}</p>
-                                            <p>Current Time: {debugInfo.currentTime}</p>
-                                            <p>Duration: {debugInfo.duration}</p>
-                                            <p>Error: {debugInfo.error}</p>
+                                            <p>Size: {debugInfo.videoWidth || 0}x{debugInfo.videoHeight || 0}</p>
+                                            <p>Ready State: {debugInfo.readyState || 0}</p>
+                                            <p>Paused: {debugInfo.paused !== undefined ? (debugInfo.paused ? 'Yes' : 'No') : 'unknown'}</p>
+                                            <p>Current Time: {debugInfo.currentTime || 0}</p>
+                                            <p>Duration: {debugInfo.duration || 0}</p>
+                                            <p>Error: {debugInfo.error || 'none'}</p>
                                             </>
                                             ) : (
                                             <p>Initializing debug info...</p>
