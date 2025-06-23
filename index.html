@@ -29,6 +29,8 @@
             const [redirectChain, setRedirectChain] = useState([]);
             const [supported, setSupported] = useState(true);
             const [permissionStatus, setPermissionStatus] = useState('prompt');
+            const [debugMode, setDebugMode] = useState(false);
+            const [debugInfo, setDebugInfo] = useState({});
             const videoRef = useRef(null);
             const streamRef = useRef(null);
             const detectorRef = useRef(null);
@@ -38,7 +40,7 @@
                 // Check if BarcodeDetector is supported
                 if (!('BarcodeDetector' in window)) {
                     setSupported(false);
-                    setError('QR code scanning is not supported on this browser. Try using Chrome on your Pixel 7 Pro.');
+                    setError('QR code scanning is not supported on this browser. Please use Chrome, Edge, or Opera.');
                 } else {
                     // Check if QR code format is supported
                     window.BarcodeDetector.getSupportedFormats().then(formats => {
@@ -76,13 +78,22 @@
                     // Request camera permission with better error handling
                     let stream;
                     try {
-                        stream = await navigator.mediaDevices.getUserMedia({
+                        // Try to use rear camera on mobile, but allow any camera on desktop
+                        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+                        const constraints = isMobile ? {
                             video: { 
-                                facingMode: 'environment',
+                                facingMode: { ideal: 'environment' },
                                 width: { ideal: 1280 },
                                 height: { ideal: 720 }
                             }
-                        });
+                        } : {
+                            video: {
+                                width: { ideal: 1280 },
+                                height: { ideal: 720 }
+                            }
+                        };
+                        
+                        stream = await navigator.mediaDevices.getUserMedia(constraints);
                     } catch (permError) {
                         // Handle specific permission errors
                         if (permError.name === 'NotAllowedError') {
@@ -114,6 +125,16 @@
                     if (videoRef.current) {
                         videoRef.current.srcObject = stream;
                         await videoRef.current.play();
+                        
+                        // Capture video stream info for debugging
+                        const videoTrack = stream.getVideoTracks()[0];
+                        const settings = videoTrack.getSettings();
+                        setDebugInfo(prev => ({
+                            ...prev,
+                            videoSettings: settings,
+                            trackLabel: videoTrack.label,
+                            trackState: videoTrack.readyState
+                        }));
                     }
                     
                     // Create barcode detector
@@ -207,7 +228,7 @@
             const openSettings = () => {
                 setError(
                     <div>
-                        <p className="mb-2">To enable camera access on your Pixel 7 Pro:</p>
+                        <p className="mb-2">To enable camera access:</p>
                         <ol className="list-decimal list-inside space-y-1 text-sm">
                             <li>Tap the lock icon in your browser's address bar</li>
                             <li>Find "Camera" in the permissions list</li>
@@ -230,10 +251,12 @@
                                 </div>
                                 <p className="mt-2 text-sm text-gray-300">{error}</p>
                                 <p className="mt-3 text-xs text-gray-400">
-                                    For Pixel 7 Pro, use:
+                                    Supported browsers:
                                     <br />• Chrome (recommended)
-                                    <br />• Edge
+                                    <br />• Edge (Chromium-based)
                                     <br />• Opera
+                                    <br />
+                                    <br />Note: Firefox and Safari do not support the BarcodeDetector API.
                                 </p>
                             </div>
                         </div>
@@ -292,9 +315,32 @@
                                     </div>
                                 )}
                                 
-                                <div className="mt-6 text-xs text-gray-500">
+                                <div className="mt-6 text-xs text-gray-500 space-y-1">
                                     <p>Permission Status: {permissionStatus}</p>
+                                    <p>Device: {/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ? 'Mobile' : 'Desktop'}</p>
+                                    <p>Browser: {navigator.userAgent.match(/(Chrome|Edge|Opera|Firefox|Safari)\/[\d.]+/)?.[0] || 'Unknown'}</p>
+                                    <button 
+                                        onClick={() => setDebugMode(!debugMode)}
+                                        className="text-blue-400 hover:text-blue-300 underline"
+                                    >
+                                        {debugMode ? 'Hide' : 'Show'} Debug Info
+                                    </button>
                                 </div>
+                                
+                                {debugMode && (
+                                    <div className="mt-4 bg-gray-800 rounded-lg p-3 text-xs">
+                                        <h3 className="font-medium mb-2">Debug Information:</h3>
+                                        <pre className="text-gray-400 overflow-x-auto">
+                                            {JSON.stringify({
+                                                userAgent: navigator.userAgent,
+                                                hasBarcodeDetector: 'BarcodeDetector' in window,
+                                                hasMediaDevices: 'mediaDevices' in navigator,
+                                                hasGetUserMedia: navigator.mediaDevices && 'getUserMedia' in navigator.mediaDevices,
+                                                ...debugInfo
+                                            }, null, 2)}
+                                        </pre>
+                                    </div>
+                                )}
                             </div>
                         )}
                         
@@ -303,13 +349,22 @@
                                 <video
                                     ref={videoRef}
                                     className="w-full rounded-lg bg-black"
+                                    style={{ maxHeight: '70vh', objectFit: 'cover' }}
                                     playsInline
                                     autoPlay
                                     muted
                                 />
-                                <div className="absolute inset-0 border-2 border-blue-500 rounded-lg pointer-events-none">
+                                <div className="absolute inset-0 border-2 border-blue-500 rounded-lg pointer-events-none overflow-hidden">
                                     <div className="absolute inset-0 flex items-center justify-center">
-                                        <div className="w-48 h-48 border-2 border-white rounded-lg opacity-50"></div>
+                                        <div className="w-48 h-48 border-2 border-white rounded-lg opacity-50">
+                                            <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-white rounded-tl-lg"></div>
+                                            <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-white rounded-tr-lg"></div>
+                                            <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-white rounded-bl-lg"></div>
+                                            <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-white rounded-br-lg"></div>
+                                        </div>
+                                    </div>
+                                    <div className="absolute inset-0 bg-black bg-opacity-50">
+                                        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-48 h-48 bg-transparent"></div>
                                     </div>
                                 </div>
                                 <button
@@ -321,6 +376,14 @@
                                 <p className="text-center mt-4 text-sm text-gray-400">
                                     Position QR code within the frame
                                 </p>
+                                
+                                {debugMode && debugInfo.videoSettings && (
+                                    <div className="mt-2 bg-gray-800 rounded-lg p-2 text-xs">
+                                        <p>Video: {debugInfo.videoSettings.width}x{debugInfo.videoSettings.height}</p>
+                                        <p>Camera: {debugInfo.videoSettings.facingMode || 'unknown'}</p>
+                                        <p>Track: {debugInfo.trackLabel || 'unknown'}</p>
+                                    </div>
+                                )}
                             </div>
                         )}
                         
