@@ -124,104 +124,61 @@
                     streamRef.current = stream;
                     setVideoStatus('stream obtained');
                     
+                    // Simple approach - just set the stream and let browser handle it
                     if (videoRef.current) {
+                        console.log('Setting srcObject on video element');
                         videoRef.current.srcObject = stream;
-                        setVideoStatus('stream attached');
+                        setVideoStatus('stream set - waiting for video');
                         
-                        // Capture initial debug info immediately
-                        const videoTrack = stream.getVideoTracks()[0];
-                        const settings = videoTrack.getSettings();
-                        setDebugInfo({
-                            videoSettings: settings,
-                            trackLabel: videoTrack.label,
-                            trackState: videoTrack.readyState,
-                            videoWidth: 0,
-                            videoHeight: 0,
-                            readyState: 0,
-                            networkState: 0,
-                            error: 'initializing'
-                        });
+                        // Log video element state
+                        console.log('Video element:', videoRef.current);
+                        console.log('Video readyState:', videoRef.current.readyState);
+                        console.log('Video paused:', videoRef.current.paused);
                         
-                        // Force video to play immediately without waiting
-                        const forcePlay = async () => {
-                            try {
-                                // Try play first
-                                await videoRef.current.play();
-                                setVideoStatus('playing - forced');
-                            } catch (e) {
-                                console.log('Initial play failed:', e.message);
-                                setVideoStatus('play blocked - tap video');
-                                
-                                // Make the entire video container clickable
-                                const container = videoRef.current.parentElement;
-                                container.style.cursor = 'pointer';
-                                
-                                const handleClick = async (event) => {
-                                    event.preventDefault();
-                                    try {
-                                        await videoRef.current.play();
-                                        setVideoStatus('playing - user initiated');
-                                        container.removeEventListener('click', handleClick);
-                                        container.style.cursor = 'default';
-                                    } catch (playErr) {
-                                        console.error('User play failed:', playErr);
-                                        setVideoStatus('play failed: ' + playErr.message);
-                                    }
-                                };
-                                container.addEventListener('click', handleClick);
-                            }
+                        // Simple debug info update
+                        const updateDebug = () => {
+                            if (!videoRef.current || !streamRef.current) return;
+                            
+                            const track = streamRef.current.getVideoTracks()[0];
+                            setDebugInfo({
+                                hasVideo: !!videoRef.current,
+                                hasSrcObject: !!videoRef.current.srcObject,
+                                trackEnabled: track?.enabled,
+                                trackReady: track?.readyState,
+                                trackLabel: track?.label || 'none',
+                                videoWidth: videoRef.current.videoWidth,
+                                videoHeight: videoRef.current.videoHeight,
+                                readyState: videoRef.current.readyState,
+                                paused: videoRef.current.paused,
+                                currentTime: videoRef.current.currentTime,
+                                duration: videoRef.current.duration,
+                                error: videoRef.current.error?.message || 'none'
+                            });
                         };
                         
-                        // Don't wait for events, just try to play
-                        forcePlay();
+                        // Update immediately and then every 500ms
+                        updateDebug();
+                        const debugTimer = setInterval(updateDebug, 500);
                         
-                        // Update debug info periodically
-                        const updateDebugInfo = () => {
-                            if (videoRef.current && stream) {
-                                const videoTrack = stream.getVideoTracks()[0];
-                                const settings = videoTrack.getSettings();
-                                setDebugInfo({
-                                    videoSettings: settings,
-                                    trackLabel: videoTrack.label,
-                                    trackState: videoTrack.readyState,
-                                    videoWidth: videoRef.current.videoWidth || 0,
-                                    videoHeight: videoRef.current.videoHeight || 0,
-                                    readyState: videoRef.current.readyState || 0,
-                                    networkState: videoRef.current.networkState || 0,
-                                    error: videoRef.current.error?.message || 'none',
-                                    currentTime: videoRef.current.currentTime || 0,
-                                    paused: videoRef.current.paused,
-                                    muted: videoRef.current.muted,
-                                    srcObject: videoRef.current.srcObject ? 'set' : 'null'
+                        // Clean up timer later
+                        setTimeout(() => clearInterval(debugTimer), 60000);
+                        
+                        // Try different approaches to start video
+                        setTimeout(() => {
+                            console.log('Attempting video play after timeout');
+                            if (videoRef.current && videoRef.current.paused) {
+                                videoRef.current.play().then(() => {
+                                    console.log('Play successful');
+                                    setVideoStatus('playing');
+                                }).catch(err => {
+                                    console.log('Play failed:', err.message);
+                                    setVideoStatus('click to play - ' + err.message);
                                 });
                             }
-                        };
-                        
-                        // Update debug info every second
-                        const debugInterval = setInterval(updateDebugInfo, 1000);
-                        
-                        // Clean up interval when component unmounts
-                        setTimeout(() => {
-                            if (!scanningRef.current) {
-                                clearInterval(debugInterval);
-                            }
-                        }, 30000); // Stop after 30 seconds to prevent memory leak
-                        
-                        // Also set up event listeners as backup
-                        videoRef.current.onloadedmetadata = () => {
-                            setVideoStatus('metadata loaded');
-                            updateDebugInfo();
-                        };
-                        
-                        videoRef.current.oncanplay = () => {
-                            setVideoStatus('can play');
-                            updateDebugInfo();
-                        };
-                        
-                        videoRef.current.onplaying = () => {
-                            setVideoStatus('playing');
-                            updateDebugInfo();
-                        };
+                        }, 100);
+                    } else {
+                        console.error('No video ref available!');
+                        setError('Video element not found');
                     }
                     
                     // Create barcode detector
@@ -370,7 +327,7 @@
                 <div className="min-h-screen bg-gray-900 text-white">
                     <div className="max-w-md mx-auto p-4">
                         <h1 className="text-2xl font-bold mb-6 text-center">QR Code Scanner</h1>
-                        <p className="text-xs text-gray-500 text-center mb-4">Version: 2.2 - Aggressive video fix (Dec 2024)</p>
+                        <p className="text-xs text-gray-500 text-center mb-4">Version: 2.3 - Simple video approach (Dec 2024)</p>
                         
                         {!scanning && !result && (
                             <div className="text-center">
@@ -448,7 +405,22 @@
                         )}
                         
                         {scanning && (
-                            <div className="relative bg-gray-800 rounded-lg overflow-hidden" style={{ minHeight: '300px' }} onClick={() => console.log('Container clicked')}>
+                            <div 
+                                className="relative bg-gray-800 rounded-lg overflow-hidden" 
+                                style={{ minHeight: '300px' }}
+                                onClick={async (e) => {
+                                    console.log('Container clicked');
+                                    if (videoRef.current && videoRef.current.paused) {
+                                        try {
+                                            await videoRef.current.play();
+                                            setVideoStatus('playing after click');
+                                        } catch (err) {
+                                            console.error('Click play failed:', err);
+                                            setVideoStatus('play error: ' + err.message);
+                                        }
+                                    }
+                                }}
+                            >
                                 <video
                                     ref={videoRef}
                                     className="w-full h-full rounded-lg bg-gray-800 cursor-pointer"
@@ -476,8 +448,8 @@
                                     <Icon name="x" />
                                 </button>
                                 <p className="text-center mt-4 text-sm text-gray-400">
-                                    {videoStatus.includes('tap') ? 
-                                        <span className="text-yellow-400">⚠️ Tap anywhere on the video area to start camera</span> : 
+                                    {videoStatus.includes('click') ? 
+                                        <span className="text-yellow-400 font-bold">⚠️ TAP HERE to start camera</span> : 
                                         'Position QR code within the frame'
                                     }
                                 </p>
@@ -492,23 +464,23 @@
                                     </button>
                                     {debugMode && (
                                         <div className="mt-2 text-left">
-                                            {debugInfo.videoSettings ? (
-                                                <>
-                                                    <p>Stream: {debugInfo.videoSettings.width}x{debugInfo.videoSettings.height}</p>
-                                                    <p>Video: {debugInfo.videoWidth}x{debugInfo.videoHeight}</p>
-                                                    <p>Camera: {debugInfo.videoSettings.facingMode || 'unknown'}</p>
-                                                    <p>Track: {debugInfo.trackState}</p>
-                                                    <p>Ready: {debugInfo.readyState} (0=none, 1=meta, 2=current, 3=future, 4=enough)</p>
-                                                    <p>Network: {debugInfo.networkState} (0=empty, 1=idle, 2=loading, 3=no source)</p>
-                                                    <p>Error: {debugInfo.error}</p>
-                                                    <p>Time: {debugInfo.currentTime}s</p>
-                                                    <p>Paused: {debugInfo.paused ? 'Yes' : 'No'}</p>
-                                                    <p>Muted: {debugInfo.muted ? 'Yes' : 'No'}</p>
-                                                    <p>SrcObject: {debugInfo.srcObject}</p>
-                                                    {debugInfo.note && <p>Note: {debugInfo.note}</p>}
-                                                </>
+                                            {debugInfo.hasVideo !== undefined ? (
+                                            <>
+                                            <p className="font-bold">Basic Checks:</p>
+                                            <p>Has Video Element: {debugInfo.hasVideo ? 'Yes' : 'No'}</p>
+                                            <p>Has SrcObject: {debugInfo.hasSrcObject ? 'Yes' : 'No'}</p>
+                                            <p>Track Enabled: {debugInfo.trackEnabled ? 'Yes' : 'No'}</p>
+                                            <p>Track Ready: {debugInfo.trackReady}</p>
+                                            <p className="font-bold mt-2">Video State:</p>
+                                            <p>Size: {debugInfo.videoWidth}x{debugInfo.videoHeight}</p>
+                                            <p>Ready State: {debugInfo.readyState}</p>
+                                            <p>Paused: {debugInfo.paused ? 'Yes' : 'No'}</p>
+                                            <p>Current Time: {debugInfo.currentTime}</p>
+                                            <p>Duration: {debugInfo.duration}</p>
+                                            <p>Error: {debugInfo.error}</p>
+                                            </>
                                             ) : (
-                                                <p>Waiting for video info...</p>
+                                            <p>Initializing debug info...</p>
                                             )}
                                         </div>
                                     )}
