@@ -128,26 +128,46 @@
                         videoRef.current.srcObject = stream;
                         setVideoStatus('stream attached');
                         
-                        // Wait for video metadata to load
-                        await new Promise((resolve, reject) => {
-                            const timeout = setTimeout(() => {
-                                reject(new Error('Video metadata loading timeout'));
-                            }, 5000);
-                            
-                            videoRef.current.onloadedmetadata = () => {
-                                clearTimeout(timeout);
-                                resolve();
-                            };
-                            
-                            // If metadata is already loaded
-                            if (videoRef.current.readyState >= 1) {
-                                clearTimeout(timeout);
-                                resolve();
-                            }
-                        });
+                        // Force video to load
+                        videoRef.current.load();
                         
-                        await videoRef.current.play();
-                        setVideoStatus('playing');
+                        // Wait for video to be ready with multiple fallbacks
+                        try {
+                            await new Promise((resolve, reject) => {
+                                const timeout = setTimeout(() => {
+                                    // Don't reject, just continue anyway
+                                    console.warn('Video metadata loading timeout, continuing anyway');
+                                    resolve();
+                                }, 3000);
+                                
+                                videoRef.current.onloadedmetadata = () => {
+                                    clearTimeout(timeout);
+                                    resolve();
+                                };
+                                
+                                videoRef.current.oncanplay = () => {
+                                    clearTimeout(timeout);
+                                    resolve();
+                                };
+                                
+                                // If video is already ready
+                                if (videoRef.current.readyState >= 2) {
+                                    clearTimeout(timeout);
+                                    resolve();
+                                }
+                            });
+                        } catch (err) {
+                            console.warn('Video loading warning:', err);
+                        }
+                        
+                        try {
+                            await videoRef.current.play();
+                            setVideoStatus('playing');
+                        } catch (playErr) {
+                            console.error('Play error:', playErr);
+                            setVideoStatus('play failed: ' + playErr.message);
+                            // Try to continue anyway
+                        }
                         
                         // Capture video stream info for debugging
                         const videoTrack = stream.getVideoTracks()[0];
@@ -411,16 +431,29 @@
                                 </p>
                                 
                                 {scanning && (
-                                    <div className="mt-2 bg-gray-800 rounded-lg p-2 text-xs">
-                                        <p>Status: {videoStatus}</p>
-                                        {debugMode && debugInfo.videoSettings && (
-                                            <>
-                                                <p>Stream: {debugInfo.videoSettings.width}x{debugInfo.videoSettings.height}</p>
-                                                <p>Video: {debugInfo.videoWidth}x{debugInfo.videoHeight}</p>
-                                                <p>Camera: {debugInfo.videoSettings.facingMode || 'unknown'}</p>
-                                                <p>Track: {debugInfo.trackLabel || 'unknown'}</p>
-                                                <p>State: {debugInfo.trackState}</p>
-                                            </>
+                                    <div className="mt-2 bg-gray-800 rounded-lg p-2 text-xs text-center">
+                                        <p className="font-medium">Status: {videoStatus}</p>
+                                        <button 
+                                            onClick={() => setDebugMode(!debugMode)}
+                                            className="text-blue-400 hover:text-blue-300 underline mt-1"
+                                        >
+                                            {debugMode ? 'Hide' : 'Show'} Debug Info
+                                        </button>
+                                        {debugMode && (
+                                            <div className="mt-2 text-left">
+                                                {debugInfo.videoSettings ? (
+                                                    <>
+                                                        <p>Stream: {debugInfo.videoSettings.width}x{debugInfo.videoSettings.height}</p>
+                                                        <p>Video: {debugInfo.videoWidth}x{debugInfo.videoHeight}</p>
+                                                        <p>Camera: {debugInfo.videoSettings.facingMode || 'unknown'}</p>
+                                                        <p>Track: {debugInfo.trackLabel || 'unknown'}</p>
+                                                        <p>State: {debugInfo.trackState}</p>
+                                                        <p>Ready State: {videoRef.current?.readyState || 'N/A'}</p>
+                                                    </>
+                                                ) : (
+                                                    <p>Waiting for video info...</p>
+                                                )}
+                                            </div>
                                         )}
                                     </div>
                                 )}
