@@ -4,7 +4,7 @@
   "description": "QR code scanner with redirect chain tracking",
   "private": true,
   "scripts": {
-    "dev": "vercel dev",
+    "start": "echo 'Open index.html in your browser'",
     "deploy": "vercel --prod"
   },
   "author": "Chris Rea",
