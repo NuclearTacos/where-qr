@@ -50,7 +50,7 @@ export default async function handler(req, res) {
           responseTime
         });
         
-        // Check if it's a redirect
+        // Check if it's a standard HTTP redirect
         if (response.status >= 300 && response.status < 400) {
           const location = response.headers.get('location');
           
@@ -64,6 +64,24 @@ export default async function handler(req, res) {
             }
           } else {
             // No location header, stop
+            break;
+          }
+        } else if (response.status === 200) {
+          // Check for JavaScript redirects in 200 responses
+          try {
+            const text = await response.text();
+            const jsRedirectUrl = extractJavaScriptRedirect(text, currentUrl);
+            
+            if (jsRedirectUrl) {
+              currentUrl = jsRedirectUrl;
+              // Continue the loop to follow the JavaScript redirect
+              continue;
+            } else {
+              // No JavaScript redirect found, we've reached the final destination
+              break;
+            }
+          } catch (textError) {
+            // If we can't read the response text, treat as final destination
             break;
           }
         } else {
@@ -94,7 +112,8 @@ export default async function handler(req, res) {
       chain,
       originalUrl: url,
       finalUrl: chain.length > 0 ? chain[chain.length - 1].url : url,
-      redirectCount: chain.filter(c => c.status >= 300 && c.status < 400).length
+      redirectCount: chain.filter(c => c.status >= 300 && c.status < 400).length,
+      jsRedirectCount: chain.filter(c => c.status === 200).length - 1 // Subtract final destination
     });
     
   } catch (error) {
@@ -103,4 +122,48 @@ export default async function handler(req, res) {
       details: error.message
     });
   }
+}
+
+// Function to extract JavaScript redirect URLs from HTML content
+function extractJavaScriptRedirect(html, baseUrl) {
+  // Common JavaScript redirect patterns
+  const patterns = [
+    // window.location.href = "url"
+    /window\.location\.href\s*=\s*["']([^"']+)["']/i,
+    // window.location.replace("url")
+    /window\.location\.replace\s*\(\s*["']([^"']+)["']\s*\)/i,
+    // window.location = "url"
+    /window\.location\s*=\s*["']([^"']+)["']/i,
+    // location.href = "url"
+    /location\.href\s*=\s*["']([^"']+)["']/i,
+    // location.replace("url")
+    /location\.replace\s*\(\s*["']([^"']+)["']\s*\)/i,
+    // location = "url"
+    /location\s*=\s*["']([^"']+)["']/i,
+    // Meta refresh: <meta http-equiv="refresh" content="0;url=...">
+    /<meta[^>]+http-equiv=["']refresh["'][^>]+content=["'][^;]*;\s*url=([^"']+)["']/i,
+    // Meta refresh alternative format
+    /<meta[^>]+content=["'][^;]*;\s*url=([^"']+)["'][^>]+http-equiv=["']refresh["']/i
+  ];
+  
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (match && match[1]) {
+      try {
+        // Handle relative URLs
+        const redirectUrl = new URL(match[1], baseUrl).href;
+        
+        // Validate that it's a proper HTTP(S) URL and not a javascript: or other scheme
+        const testUrl = new URL(redirectUrl);
+        if (['http:', 'https:'].includes(testUrl.protocol)) {
+          return redirectUrl;
+        }
+      } catch (e) {
+        // Invalid URL, continue to next pattern
+        continue;
+      }
+    }
+  }
+  
+  return null;
 }
