@@ -1,0 +1,12 @@
+{
+  "name": "where-qr",
+  "version": "3.0.0",
+  "description": "QR code scanner with redirect chain tracking",
+  "private": true,
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel --prod"
+  },
+  "author": "Chris Rea",
+  "license": "MIT"
+}
