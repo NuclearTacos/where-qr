@@ -47,7 +47,9 @@ export default async function handler(req, res) {
         chain.push({
           url: currentUrl,
           status: response.status,
-          responseTime
+          responseTime,
+          redirectMethod: 'http-header',
+          redirectDetails: `${response.status} redirect with Location header`
         });
         
         // Check if it's a standard HTTP redirect
@@ -70,22 +72,32 @@ export default async function handler(req, res) {
           // Check for JavaScript redirects in 200 responses
           try {
             const text = await response.text();
-            const jsRedirectUrl = extractJavaScriptRedirect(text, currentUrl);
+            const jsRedirectResult = extractJavaScriptRedirect(text, currentUrl);
             
-            if (jsRedirectUrl) {
-              currentUrl = jsRedirectUrl;
+            if (jsRedirectResult.url) {
+              // Update the chain entry to include redirect details
+              chain[chain.length - 1].redirectMethod = jsRedirectResult.method;
+              chain[chain.length - 1].redirectDetails = jsRedirectResult.details;
+              
+              currentUrl = jsRedirectResult.url;
               // Continue the loop to follow the JavaScript redirect
               continue;
             } else {
-              // No JavaScript redirect found, we've reached the final destination
+              // No JavaScript redirect found, mark as final destination
+              chain[chain.length - 1].redirectMethod = 'none';
+              chain[chain.length - 1].redirectDetails = 'Final destination (no redirect detected)';
               break;
             }
           } catch (textError) {
             // If we can't read the response text, treat as final destination
+            chain[chain.length - 1].redirectMethod = 'error';
+            chain[chain.length - 1].redirectDetails = 'Could not read response body for redirect detection';
             break;
           }
         } else {
           // Not a redirect, we've reached the final destination
+          chain[chain.length - 1].redirectMethod = 'none';
+          chain[chain.length - 1].redirectDetails = `Final destination (HTTP ${response.status})`;
           break;
         }
       } catch (fetchError) {
@@ -94,13 +106,17 @@ export default async function handler(req, res) {
             url: currentUrl,
             status: 0,
             error: 'Request timeout',
-            responseTime: timeout
+            responseTime: timeout,
+            redirectMethod: 'error',
+            redirectDetails: 'Request timed out after 10 seconds'
           });
         } else {
           chain.push({
             url: currentUrl,
             status: 0,
-            error: fetchError.message
+            error: fetchError.message,
+            redirectMethod: 'error',
+            redirectDetails: `Network error: ${fetchError.message}`
           });
         }
         break;
@@ -126,28 +142,52 @@ export default async function handler(req, res) {
 
 // Function to extract JavaScript redirect URLs from HTML content
 function extractJavaScriptRedirect(html, baseUrl) {
-  // Common JavaScript redirect patterns
+  // Common JavaScript redirect patterns with descriptions
   const patterns = [
-    // window.location.href = "url"
-    /window\.location\.href\s*=\s*["']([^"']+)["']/i,
-    // window.location.replace("url")
-    /window\.location\.replace\s*\(\s*["']([^"']+)["']\s*\)/i,
-    // window.location = "url"
-    /window\.location\s*=\s*["']([^"']+)["']/i,
-    // location.href = "url"
-    /location\.href\s*=\s*["']([^"']+)["']/i,
-    // location.replace("url")
-    /location\.replace\s*\(\s*["']([^"']+)["']\s*\)/i,
-    // location = "url"
-    /location\s*=\s*["']([^"']+)["']/i,
-    // Meta refresh: <meta http-equiv="refresh" content="0;url=...">
-    /<meta[^>]+http-equiv=["']refresh["'][^>]+content=["'][^;]*;\s*url=([^"']+)["']/i,
-    // Meta refresh alternative format
-    /<meta[^>]+content=["'][^;]*;\s*url=([^"']+)["'][^>]+http-equiv=["']refresh["']/i
+    {
+      regex: /window\.location\.href\s*=\s*["']([^"']+)["']/i,
+      method: 'javascript-window-href',
+      description: 'JavaScript: window.location.href assignment'
+    },
+    {
+      regex: /window\.location\.replace\s*\(\s*["']([^"']+)["']\s*\)/i,
+      method: 'javascript-window-replace',
+      description: 'JavaScript: window.location.replace() call'
+    },
+    {
+      regex: /window\.location\s*=\s*["']([^"']+)["']/i,
+      method: 'javascript-window-location',
+      description: 'JavaScript: window.location assignment'
+    },
+    {
+      regex: /location\.href\s*=\s*["']([^"']+)["']/i,
+      method: 'javascript-location-href',
+      description: 'JavaScript: location.href assignment'
+    },
+    {
+      regex: /location\.replace\s*\(\s*["']([^"']+)["']\s*\)/i,
+      method: 'javascript-location-replace',
+      description: 'JavaScript: location.replace() call'
+    },
+    {
+      regex: /location\s*=\s*["']([^"']+)["']/i,
+      method: 'javascript-location',
+      description: 'JavaScript: location assignment'
+    },
+    {
+      regex: /<meta[^>]+http-equiv=["']refresh["'][^>]+content=["'][^;]*;\s*url=([^"']+)["']/i,
+      method: 'meta-refresh',
+      description: 'HTML: <meta http-equiv="refresh"> tag'
+    },
+    {
+      regex: /<meta[^>]+content=["'][^;]*;\s*url=([^"']+)["'][^>]+http-equiv=["']refresh["']/i,
+      method: 'meta-refresh-alt',
+      description: 'HTML: <meta> refresh tag (alternative format)'
+    }
   ];
   
   for (const pattern of patterns) {
-    const match = html.match(pattern);
+    const match = html.match(pattern.regex);
     if (match && match[1]) {
       try {
         // Handle relative URLs
@@ -156,7 +196,11 @@ function extractJavaScriptRedirect(html, baseUrl) {
         // Validate that it's a proper HTTP(S) URL and not a javascript: or other scheme
         const testUrl = new URL(redirectUrl);
         if (['http:', 'https:'].includes(testUrl.protocol)) {
-          return redirectUrl;
+          return {
+            url: redirectUrl,
+            method: pattern.method,
+            details: pattern.description
+          };
         }
       } catch (e) {
         // Invalid URL, continue to next pattern
@@ -165,5 +209,9 @@ function extractJavaScriptRedirect(html, baseUrl) {
     }
   }
   
-  return null;
+  return {
+    url: null,
+    method: 'none',
+    details: 'No redirect pattern detected in response'
+  };
 }

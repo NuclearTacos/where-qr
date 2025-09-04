@@ -154,9 +154,14 @@
                             📋
                         </button>
                     </div>
-                    <div class="text-sm text-gray-600 break-all">
+                    <div class="text-sm text-gray-600 break-all mb-1">
                         ${index === 0 ? '🔗 ' : ''}${item.url}
                     </div>
+                    ${item.redirectMethod && item.redirectMethod !== 'none' ? `
+                        <div class="text-xs text-purple-600 mb-1">
+                            🔄 ${getRedirectMethodIcon(item.redirectMethod)} ${item.redirectDetails || item.redirectMethod}
+                        </div>
+                    ` : ''}
                     ${item.responseTime ? `<div class="text-xs text-gray-500 mt-1">${item.responseTime}ms</div>` : ''}
                 </div>
             `).join('');
@@ -500,6 +505,23 @@
                 500: 'Server Error'
             };
             return statusTexts[status] || `Status ${status}`;
+        }
+
+        function getRedirectMethodIcon(method) {
+            const iconMap = {
+                'http-header': '🌐',
+                'javascript-window-href': '📜',
+                'javascript-window-replace': '📜',
+                'javascript-window-location': '📜',
+                'javascript-location-href': '📜',
+                'javascript-location-replace': '📜',
+                'javascript-location': '📜',
+                'meta-refresh': '🔄',
+                'meta-refresh-alt': '🔄',
+                'error': '⚠️',
+                'none': '🏁'
+            };
+            return iconMap[method] || '🔗';
         }
 
         // ============ GLOBAL FUNCTIONS ============
