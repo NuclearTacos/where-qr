@@ -13,8 +13,14 @@ const root = document.getElementById('root');
 // Runtime handles that do not belong in render state
 let stream = null;
 let stopDetection = null;
+let rescanTimer = null;
+let lastNonUrlText = null;
 let torch = null;
 let requestId = 0;
+
+// After a code that is not a link, wait before decoding again so the same
+// code sitting in frame does not hammer the detector and re-render loop.
+const RESCAN_DELAY_MS = 1500;
 
 // ---------- rendering ----------
 
@@ -23,12 +29,10 @@ subscribe(() => renderApp(root, state));
 function afterRender() {
   if (state.view === 'scanning' && stream) {
     const video = root.querySelector('[data-video]');
-    const canvas = root.querySelector('[data-canvas]');
     if (video && video.srcObject !== stream) {
       video.srcObject = stream;
       video.play?.().catch(() => {});
-      stopDetection?.();
-      stopDetection = startDetection(video, canvas, onCodeDetected);
+      restartDetection(0);
     }
   }
   if (state.view === 'input') root.querySelector('#manual-url')?.focus({ preventScroll: true });
@@ -56,25 +60,40 @@ async function analyze(url, { pushHistory = true } = {}) {
   }
 }
 
-function handleDecodedText(text, { fromScanner = false } = {}) {
+function handleDecodedText(text) {
   const url = parseHttpUrl(text);
   if (url) { analyze(url.href); return true; }
-  if (fromScanner) {
-    setState({ scanNotice: { text: 'That code contains text, not a link:', value: text } });
-  } else {
-    toast(`That code contains text, not a link: ${text.slice(0, 80)}`, { tone: 'error', duration: 5000 });
-  }
+  toast(`That code contains text, not a link: ${text.slice(0, 80)}`, { tone: 'error', duration: 5000 });
   return false;
 }
 
-function onCodeDetected(text) {
-  if (navigator.vibrate) navigator.vibrate(40);
-  if (!handleDecodedText(text, { fromScanner: true })) {
-    // Not a URL: keep the camera running so they can scan a different code.
+function restartDetection(delay) {
+  stopDetection?.(); stopDetection = null;
+  clearTimeout(rescanTimer);
+  rescanTimer = setTimeout(() => {
     const video = root.querySelector('[data-video]');
     const canvas = root.querySelector('[data-canvas]');
-    if (video) stopDetection = startDetection(video, canvas, onCodeDetected);
+    if (video && canvas && stream && state.view === 'scanning') {
+      stopDetection = startDetection(video, canvas, onCodeDetected);
+    }
+  }, delay);
+}
+
+function onCodeDetected(text) {
+  const url = parseHttpUrl(text);
+  if (url) {
+    if (navigator.vibrate) navigator.vibrate(40);
+    analyze(url.href);
+    return;
   }
+  // Not a link. Show it once, then keep scanning at a gentle pace so a
+  // different code can be presented.
+  if (text !== lastNonUrlText) {
+    lastNonUrlText = text;
+    if (navigator.vibrate) navigator.vibrate([30, 60, 30]);
+    setState({ scanNotice: { text: 'That code contains text, not a link:', value: text } });
+  }
+  restartDetection(RESCAN_DELAY_MS);
 }
 
 // ---------- camera ----------
@@ -87,11 +106,13 @@ async function startCamera() {
     return;
   }
   torch = torchTrack(stream);
+  lastNonUrlText = null;
   setState({ view: 'scanning', scanNotice: null, torchAvailable: Boolean(torch), torchOn: false });
 }
 
 function stopCamera({ rerender = true } = {}) {
   stopDetection?.(); stopDetection = null;
+  clearTimeout(rescanTimer); rescanTimer = null;
   closeCamera(stream); stream = null; torch = null;
   if (rerender && state.view === 'scanning') setState({ view: 'input', scanNotice: null, torchOn: false });
 }
