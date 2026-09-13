@@ -1,11 +1,20 @@
 {
   "name": "where-qr",
-  "version": "3.0.0",
-  "description": "QR code scanner with redirect chain tracking",
+  "version": "4.0.0",
+  "description": "Scan a QR code and see exactly where it sends you: every redirect hop, every tracking parameter, before you visit.",
   "private": true,
+  "type": "module",
+  "engines": { "node": ">=20" },
   "scripts": {
-    "start": "echo 'Open index.html in your browser'",
+    "dev": "node scripts/dev-server.mjs",
+    "test": "node --test",
+    "lint": "eslint .",
     "deploy": "vercel --prod"
+  },
+  "devDependencies": {
+    "eslint": "^9.0.0",
+    "@eslint/js": "^9.0.0",
+    "globals": "^15.0.0"
   },
   "author": "Chris Rea",
   "license": "MIT"
